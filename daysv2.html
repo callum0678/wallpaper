@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exam Manager | Ghost Radar</title>
+    <!-- Map Assets -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        :root {
+            --bg-overlay: rgba(15, 23, 42, 0.4);
+            --card-bg: rgba(30, 41, 59, 0.85);
+            --accent-1: hsl(199, 89%, 60%);
+            --text-main: #f8fafc;
+            --text-dim: #94a3b8;
+        }
+
+        body {
+            margin: 0; padding: 0; background-color: #0f172a;
+            color: var(--text-main); font-family: 'Inter', sans-serif;
+            height: 100vh; overflow: hidden;
+        }
+
+        /* Background Layers */
+        #bg-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -2; overflow: hidden; }
+        
+        /* The Fix: Fully transparent map container */
+        #radar-layer { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            z-index: -1; opacity: 0.8; pointer-events: none; 
+            background: transparent !important; 
+        }
+        .leaflet-container { background: transparent !important; }
+
+        #bg-video, #bg-image {
+            position: absolute; top: 50%; left: 50%; min-width: 100%; min-height: 100%;
+            transform: translate(-50%, -50%); object-fit: cover; display: none;
+        }
+
+        #bg-overlay-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-overlay); z-index: 1; }
+
+        /* Plane Radar Styling */
+        .plane-icon { color: var(--accent-1); font-size: 18px; filter: drop-shadow(0 0 5px var(--accent-1)); transition: all 1s linear; }
+        .plane-label { color: rgba(255,255,255,0.4); font-size: 9px; font-weight: bold; white-space: nowrap; }
+
+        /* Weather UI */
+        #weather-display {
+            position: fixed; top: 30px; left: 50%; transform: translateX(-50%);
+            z-index: 1000; text-align: center; pointer-events: none;
+        }
+        .weather-emoji { font-size: 4rem; display: block; margin-bottom: -5px; }
+        .weather-text { font-size: 1.4rem; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; }
+        .weather-temp { color: var(--accent-1); margin-left: 8px; }
+        .weather-sub { font-size: 0.9rem; color: var(--text-dim); margin-top: 5px; letter-spacing: 1px; }
+
+        /* App Layout */
+        #app-container {
+            height: 100vh; display: flex; justify-content: center; align-items: center;
+            gap: 2rem; padding: 0 5vw; transition: filter 0.3s ease;
+            flex-wrap: wrap; position: relative; z-index: 2;
+        }
+
+        .exam-card {
+            flex: 0 1 350px; background: var(--card-bg); backdrop-filter: blur(12px);
+            border-radius: 24px; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; padding: 2.5rem 1.5rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1); cursor: pointer;
+            user-select: none; transition: transform 0.05s ease;
+        }
+
+        .module-code { font-size: 2.2rem; font-weight: 800; margin: 0; color: var(--accent-1); text-transform: uppercase; }
+        .days-remaining { font-size: 7rem; font-weight: 900; line-height: 1; margin: 0.5rem 0; }
+        .label { font-size: 1.1rem; color: var(--text-dim); letter-spacing: 1px; }
+        .shattered { opacity: 0 !important; pointer-events: none; }
+
+        /* Settings UI */
+        #settings-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(10, 15, 25, 0.98); backdrop-filter: blur(30px);
+            z-index: 2000; display: none; justify-content: center; align-items: center;
+        }
+        #settings-overlay.open { display: flex; }
+        .settings-viewport { width: 100%; max-width: 650px; max-height: 70vh; overflow-y: auto; position: relative; }
+        .settings-section { margin-bottom: 2rem; background: rgba(255,255,255,0.03); padding: 1.5rem; border-radius: 20px; border: 1px solid rgba(255,255,255,0.05); }
+        .input-group { display: flex; gap: 10px; margin-bottom: 1rem; }
+        input { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.2); padding: 12px; border-radius: 8px; color: white; flex: 1; }
+        .btn { padding: 12px 20px; border-radius: 8px; border: none; cursor: pointer; font-weight: 600; }
+        .btn-add { background: var(--accent-1); color: #000; }
+        #settings-trigger { position: fixed; bottom: 65px; left: 25px; z-index: 1000; font-size: 1.1rem; background: rgba(255,255,255,0.08); padding: 8px; border-radius: 50%; cursor: pointer; border: 1px solid rgba(255,255,255,0.1); }
+        
+        /* Animations */
+        .fragment { position: absolute; pointer-events: none; z-index: 3000; animation: shatter-explode 1.5s forwards; font-size: 2.5rem; }
+        @keyframes shatter-explode {
+            0% { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 1; }
+            100% { transform: translate(var(--vx), calc(var(--vy) + 1000px)) rotate(var(--tr)) scale(0); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="bg-container">
+        <div id="bg-overlay-layer"></div>
+        <video id="bg-video" autoplay muted loop playsinline></video>
+        <div id="bg-image"></div>
+    </div>
+
+    <!-- The Radar Layer -->
+    <div id="radar-layer"></div>
+
+    <div id="weather-display">
+        <span class="weather-emoji" id="w-emoji">🌤️</span>
+        <div class="weather-text">
+            <span id="w-desc">FETCHING WEATHER</span> <span class="weather-temp" id="w-temp">--°C</span>
+        </div>
+        <div class="weather-sub" id="w-loc">INITIALIZING RADAR...</div>
+    </div>
+
+    <div id="app-container"></div>
+    <div id="settings-trigger">🔧</div>
+
+    <div id="settings-overlay">
+        <button class="btn" id="exit-btn" style="position:fixed; top:30px; right:40px; background:white; color:black;">DONE</button>
+        <div class="settings-viewport">
+            <div class="settings-content-wrapper">
+                <div class="settings-section">
+                    <h2 style="color:var(--accent-1); margin-top:0;">Background Configuration</h2>
+                    <div class="input-group">
+                        <input type="text" id="wallpaper-path" placeholder="URL or file path to video/image">
+                        <button class="btn btn-add" id="apply-wallpaper">Apply</button>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <h2 style="color:var(--accent-1); margin-top:0;">Exam Management</h2>
+                    <div class="input-group">
+                        <input type="text" id="new-code" placeholder="Module Code">
+                        <input type="date" id="new-date">
+                        <button class="btn btn-add" id="add-exam">Add</button>
+                    </div>
+                    <div id="exam-manage-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const DEFAULT_BG = 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=2072&auto=format&fit=crop';
+        let exams = JSON.parse(localStorage.getItem('exams')) || [{ id: 1, code: 'CSC1033', date: '2026-05-18' }];
+        let planeMarkers = {};
+
+        // 1. Initialize Transparent Radar Map
+        const map = L.map('radar-layer', {
+            center: [54.5, -2.5], zoom: 6, zoomControl: false, 
+            attributionControl: false, dragging: false, scrollWheelZoom: false
+        });
+
+        // UK/Ireland Outlines Only (No base tiles)
+        fetch('https://raw.githubusercontent.com/datasets/geo-boundaries-world-110m/master/countries.geojson')
+            .then(res => res.json()).then(data => {
+                L.geoJSON(data, {
+                    filter: (f) => ['United Kingdom', 'Ireland'].includes(f.properties.name),
+                    style: { color: 'rgba(255,255,255,0.2)', weight: 1.5, fillOpacity: 0 }
+                }).addTo(map);
+            });
+
+        // 2. Data Sync
+        async function updateData() {
+            try {
+                // Local Weather based on Nottingham Coordinates
+                const wRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=52.95&longitude=-1.15&current=temperature_2m,weather_code`);
+                const wData = await wRes.json();
+                
+                const weatherMap = {
+                    0: { desc: 'Clear Sky', emoji: '☀️' },
+                    1: { desc: 'Mainly Clear', emoji: '🌤️' },
+                    2: { desc: 'Partly Cloudy', emoji: '⛅' },
+                    3: { desc: 'Overcast', emoji: '☁️' },
+                    45: { desc: 'Foggy', emoji: '🌫️' },
+                    61: { desc: 'Rainy', emoji: '🌧️' },
+                    95: { desc: 'Stormy', emoji: '⛈️' }
+                };
+                const status = weatherMap[wData.current.weather_code] || { desc: 'Cloudy', emoji: '☁️' };
+
+                document.getElementById('w-temp').innerText = `${Math.round(wData.current.temperature_2m)}°C`;
+                document.getElementById('w-desc').innerText = status.desc;
+                document.getElementById('w-emoji').innerText = status.emoji;
+                document.getElementById('w-loc').innerText = "NOTTINGHAM • LOCAL AIRSPACE ACTIVE";
+
+                // Ghost Radar Planes (AllOrigins Proxy)
+                const target = "https://opensky-network.org/api/states/all?lamin=49.8&lamax=59.5&lomin=-10.5&lomax=1.8";
+                const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(target)}`;
+                const pRes = await fetch(proxy);
+                const pRaw = await pRes.json();
+                const pData = JSON.parse(pRaw.contents);
+
+                if (pData && pData.states) {
+                    pData.states.slice(0, 35).forEach(s => {
+                        const [icao, call, country, time, last, lon, lat, baro, ground, heading] = s;
+                        if (lat && lon) {
+                            const angle = (heading || 0) - 45;
+                            if (planeMarkers[icao]) {
+                                planeMarkers[icao].setLatLng([lat, lon]);
+                                const el = planeMarkers[icao].getElement().querySelector('.plane-icon');
+                                if(el) el.style.transform = `rotate(${angle}deg)`;
+                            } else {
+                                const icon = L.divIcon({
+                                    className: 'p-idx',
+                                    html: `<div class="plane-icon" style="transform: rotate(${angle}deg)">✈</div><div class="plane-label">${call ? call.trim() : ''}</div>`
+                                });
+                                planeMarkers[icao] = L.marker([lat, lon], { icon }).addTo(map);
+                            }
+                        }
+                    });
+                }
+            } catch (e) { console.warn("Syncing..."); }
+        }
+
+        // 3. App Logic
+        function renderExams() {
+            const container = document.getElementById('app-container');
+            const manageList = document.getElementById('exam-manage-list');
+            container.innerHTML = ''; manageList.innerHTML = '';
+            
+            exams.sort((a,b) => new Date(a.date) - new Date(b.date)).forEach(exam => {
+                const card = document.createElement('div');
+                card.className = 'exam-card';
+                const days = Math.ceil((new Date(exam.date) - new Date()) / 86400000);
+                
+                card.innerHTML = `
+                    <h1 class="module-code">${exam.code}</h1>
+                    <div class="days-remaining">${days <= 0 ? 0 : days}</div>
+                    <div class="label">DAYS REMAINING</div>
+                `;
+
+                let clicks = 0;
+                card.onclick = () => {
+                    clicks++;
+                    card.style.transform = `scale(0.96) translate(${(Math.random()-0.5)*10}px, ${(Math.random()-0.5)*10}px)`;
+                    setTimeout(() => card.style.transform = '', 50);
+                    if (clicks >= 10) { clicks = 0; shatter(card); }
+                };
+                container.appendChild(card);
+
+                const item = document.createElement('div');
+                item.style.cssText = "display:flex; justify-content:space-between; padding:12px; background:rgba(255,255,255,0.05); margin-bottom:8px; border-radius:10px;";
+                item.innerHTML = `<span>${exam.code}</span><button onclick="deleteExam(${exam.id})" style="color:#ff4444; background:none; border:none; cursor:pointer; font-weight:bold;">DELETE</button>`;
+                manageList.appendChild(item);
+            });
+            localStorage.setItem('exams', JSON.stringify(exams));
+        }
+
+        function shatter(card) {
+            const rect = card.getBoundingClientRect();
+            card.classList.add('shattered');
+            for (let i = 0; i < 25; i++) {
+                const frag = document.createElement('div');
+                frag.className = 'fragment';
+                frag.innerHTML = '📚';
+                frag.style.left = (rect.left + rect.width/2) + 'px';
+                frag.style.top = (rect.top + rect.height/2) + 'px';
+                frag.style.setProperty('--vx', (Math.random()-0.5)*800 + 'px');
+                frag.style.setProperty('--vy', (Math.random()-0.5)*600 - 300 + 'px');
+                frag.style.setProperty('--tr', (Math.random()*1500) + 'deg');
+                document.body.appendChild(frag);
+                setTimeout(() => frag.remove(), 1500);
+            }
+            setTimeout(() => card.classList.remove('shattered'), 2000);
+        }
+
+        function applyBg(path) {
+            const v = document.getElementById('bg-video'), i = document.getElementById('bg-image');
+            const isVid = /\.(mp4|webm|mov)$/i.test(path);
+            if (isVid) { i.style.display='none'; v.style.display='block'; v.src=path; v.play().catch(()=>{}); }
+            else { v.style.display='none'; i.style.display='block'; i.style.backgroundImage=`url('${path}')`; i.style.backgroundSize='cover'; }
+        }
+
+        function deleteExam(id) { exams = exams.filter(e => e.id !== id); renderExams(); }
+
+        document.getElementById('add-exam').onclick = () => {
+            const code = document.getElementById('new-code').value, date = document.getElementById('new-date').value;
+            if (code && date) { exams.push({ id: Date.now(), code, date }); renderExams(); }
+        };
+
+        document.getElementById('settings-trigger').onclick = () => {
+            document.getElementById('settings-overlay').classList.add('open');
+            document.getElementById('app-container').style.filter = 'blur(15px)';
+        };
+        document.getElementById('exit-btn').onclick = () => {
+            document.getElementById('settings-overlay').classList.remove('open');
+            document.getElementById('app-container').style.filter = '';
+        };
+        document.getElementById('apply-wallpaper').onclick = () => {
+            const p = document.getElementById('wallpaper-path').value;
+            localStorage.setItem('custom-wallpaper', p);
+            applyBg(p);
+        };
+
+        // Init
+        const savedBg = localStorage.getItem('custom-wallpaper') || DEFAULT_BG;
+        document.getElementById('wallpaper-path').value = savedBg;
+        applyBg(savedBg);
+        renderExams();
+        updateData();
+        setInterval(updateData, 35000); // Radar updates every 35s
+    </script>
+</body>
+</html>
