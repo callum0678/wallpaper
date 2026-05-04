@@ -1,92 +1,69 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>UK/IE Live Radar Wallpaper</title>
+    <title>UK Radar Wallpaper</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        :root {
-            --bg-color: #020617;     /* Deep Midnight */
-            --land-fill: #0f172a;   /* Slate Land */
-            --land-border: #334155; /* Sharp Grey Outline */
-        }
-
-        body, html, #map {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            background-color: var(--bg-color);
-            overflow: hidden;
-        }
-
-        /* Styling the map container */
-        .leaflet-container {
-            background: var(--bg-color) !important;
-            outline: 0;
-        }
-
-        /* Hide all map UI for a clean wallpaper aesthetic */
-        .leaflet-control-zoom, .leaflet-control-attribution {
-            display: none !important;
-        }
-
-        /* Style for the hardcoded strict outlines */
-        .strict-map {
-            fill: var(--land-fill);
-            stroke: var(--land-border);
-            stroke-width: 1.5px;
-            fill-opacity: 1;
-        }
-
-        /* Invert the plane tiles slightly to make them pop on dark background */
-        .leaflet-tile-pane {
-            filter: brightness(1.2) saturate(1.2) hue-rotate(180deg);
-        }
+        body, html, #map { height: 100%; margin: 0; padding: 0; background-color: #020617; }
+        /* Hides UI elements for a clean wallpaper look */
+        .leaflet-control-zoom, .leaflet-control-attribution { display: none !important; }
     </style>
 </head>
 <body>
+    <div id="map"></div>
 
-<div id="map"></div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Initialize map based on HAR coordinates
+        const map = L.map('map', {
+            center: [54.5, -4.5],
+            zoom: 6.2,
+            zoomControl: false,
+            attributionControl: false
+        });
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script>
-    // 1. Initialize Map - Locked and Centered on UK & Ireland
-    const map = L.map('map', {
-        zoomControl: false, 
-        attributionControl: false,
-        dragging: false, 
-        scrollWheelZoom: false,
-        zoomSnap: 0.1
-    }).setView([54.5, -4.5], 6.2);
+        // Set the Midnight theme colors found in your styles
+        map.getContainer().style.background = '#020617';
 
-    // 2. High-Precision "Strict" Outlines
-    // These are embedded coordinates so the map is visible instantly.
-    const ukMain = [[58.6,-3.1],[58.1,-5.2],[57.5,-5.8],[56.3,-6.2],[55.6,-4.9],[54.9,-5.1],[54.8,-3.1],[54,-3],[53.4,-4.6],[52.8,-4.7],[51.8,-5.3],[50.2,-5.7],[50.1,-3.6],[50.7,-1.3],[51.1,1.3],[51.9,1.6],[52.9,1.7],[53.6,0.1],[54.3,-0.1],[55.2,-1.5],[55.9,-2.1],[57.2,-1.9],[58.6,-3.1]];
-    const ireland = [[55.4,-7.3],[55.1,-8.2],[54.3,-10.1],[52.2,-10.4],[51.5,-9.7],[51.4,-8.4],[52.2,-6.2],[53.3,-6],[54.1,-5.9],[55.4,-7.3]];
-    const isleOfMan = [[54.2,-4.3],[54.4,-4.4],[54.4,-4.5],[54.1,-4.5]];
+        // Using a more reliable CORS proxy (Corsproxy.io) 
+        // This targets the specific ADSB.lol endpoint from your logs
+        const API_URL = "https://corsproxy.io/?https%3A%2F%2Fapi.adsb.lol%2Fv2%2Flat%2F54.5%2Flon%2F-4.5%2Fdist%2F650";
 
-    L.polygon(ukMain, {className: 'strict-map'}).addTo(map);
-    L.polygon(ireland, {className: 'strict-map'}).addTo(map);
-    L.polygon(isleOfMan, {className: 'strict-map'}).addTo(map);
+        let aircraftLayer = L.layerGroup().addTo(map);
 
-    // 3. Live Plane Layer (No API Fetch/CORS required)
-    // This connects to the OpenSky Tiled Service which serves plane images directly.
-    const planeLayer = L.tileLayer('https://{s}.tile.opensky-network.org/api/v1/static/labels/{z}/{x}/{y}.png', {
-        maxZoom: 14,
-        opacity: 0.9,
-        pane: 'markerPane' 
-    }).addTo(map);
+        async function scanRadar() {
+            try {
+                const response = await fetch(API_URL);
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                
+                const data = await response.json();
+                
+                // Clear old markers before drawing new ones
+                aircraftLayer.clearLayers();
 
-    // 4. Auto-Refresh logic
-    // Redraws the plane icons every 30 seconds to show updated positions.
-    setInterval(() => {
-        planeLayer.redraw();
-    }, 30000);
+                if (data.ac) {
+                    data.ac.forEach(plane => {
+                        if (plane.lat && plane.lon) {
+                            L.circleMarker([plane.lat, plane.lon], {
+                                radius: 4,
+                                color: '#334155', // Slate outline from your HAR data[cite: 1]
+                                fillColor: '#60a5fa', // Bright blue for visibility
+                                fillOpacity: 0.8,
+                                weight: 1
+                            }).addTo(aircraftLayer);
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error("Radar Sync Failed:", error.message);
+                // The HAR logs showed massive stalls[cite: 1], 
+                // so we catch errors here to keep the app running.
+            }
+        }
 
-    console.log("Radar Active: Tile-based tracking bypasses CORS and API limits.");
-</script>
-
+        // Initial scan and refresh every 10 seconds
+        scanRadar();
+        setInterval(scanRadar, 10000);
+    </script>
 </body>
 </html>
