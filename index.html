@@ -5,8 +5,14 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body, html, #map { height: 100%; margin: 0; padding: 0; background-color: #020617; }
-        /* Hides UI elements for a clean wallpaper look */
         .leaflet-control-zoom, .leaflet-control-attribution { display: none !important; }
+        
+        /* Custom Plane Marker Style */
+        .plane-icon {
+            color: #60a5fa;
+            transform-origin: center;
+            transition: all 0.5s linear;
+        }
     </style>
 </head>
 <body>
@@ -17,53 +23,64 @@
         // Initialize map based on HAR coordinates
         const map = L.map('map', {
             center: [54.5, -4.5],
-            zoom: 6.2,
+            zoom: 6,
             zoomControl: false,
             attributionControl: false
         });
 
-        // Set the Midnight theme colors found in your styles
-        map.getContainer().style.background = '#020617';
+        // 1. Restore the UK & Ireland Outline
+        // We fetch the boundaries to recreate the "Slate Land" look
+        fetch('https://raw.githubusercontent.com/martinjc/UK-GeoJSON/master/json/administrative/gb/uk.json')
+            .then(res => res.json())
+            .then(data => {
+                L.geoJSON(data, {
+                    style: {
+                        color: '#334155', // Grey Outline[cite: 1]
+                        weight: 1,
+                        fillColor: '#0f172a', // Slate Land[cite: 1]
+                        fillOpacity: 1
+                    }
+                }).addTo(map);
+            });
 
-        // Using a more reliable CORS proxy (Corsproxy.io) 
-        // This targets the specific ADSB.lol endpoint from your logs
         const API_URL = "https://corsproxy.io/?https%3A%2F%2Fapi.adsb.lol%2Fv2%2Flat%2F54.5%2Flon%2F-4.5%2Fdist%2F650";
-
         let aircraftLayer = L.layerGroup().addTo(map);
 
         async function scanRadar() {
             try {
                 const response = await fetch(API_URL);
-                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-                
+                if (!response.ok) throw new Error("API Offline");
                 const data = await response.json();
                 
-                // Clear old markers before drawing new ones
                 aircraftLayer.clearLayers();
 
                 if (data.ac) {
                     data.ac.forEach(plane => {
                         if (plane.lat && plane.lon) {
-                            L.circleMarker([plane.lat, plane.lon], {
-                                radius: 4,
-                                color: '#334155', // Slate outline from your HAR data[cite: 1]
-                                fillColor: '#60a5fa', // Bright blue for visibility
-                                fillOpacity: 0.8,
-                                weight: 1
+                            // Create a simple plane "icon" using SVG
+                            const planeSvg = `
+                                <svg class="plane-icon" style="transform: rotate(${plane.track || 0}deg)" viewBox="0 0 24 24" width="18" height="18">
+                                    <path fill="currentColor" d="M21,16L22,13L15,10V3.5A1.5,1.5 0 0,0 13.5,2A1.5,1.5 0 0,0 12,3.5V10L5,13L6,16L12,14V18.5L10,20V22L13.5,21L17,22V20L15,18.5V14L21,16Z" />
+                                </svg>`;
+
+                            L.marker([plane.lat, plane.lon], {
+                                icon: L.divIcon({
+                                    html: planeSvg,
+                                    className: 'plane-div-icon',
+                                    iconSize: [18, 18]
+                                })
                             }).addTo(aircraftLayer);
                         }
                     });
                 }
             } catch (error) {
-                console.error("Radar Sync Failed:", error.message);
-                // The HAR logs showed massive stalls[cite: 1], 
-                // so we catch errors here to keep the app running.
+                console.error("Radar Sync Failed[cite: 1]");
             }
         }
 
-        // Initial scan and refresh every 10 seconds
+        // Refresh every 5 seconds for smoother tracking
         scanRadar();
-        setInterval(scanRadar, 10000);
+        setInterval(scanRadar, 5000);
     </script>
 </body>
 </html>
