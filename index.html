@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Radar Wallpaper - Smooth Local Edition</title>
+    <title>Live Radar Wallpaper</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body, html, #map { 
@@ -11,15 +11,14 @@
             background-color: #020617; overflow: hidden;
         }
 
-        /* Hide UI for a clean wallpaper look */
         .leaflet-control-container { display: none !important; }
         
-        /* Map aesthetics - Dark and moody */
+        /* Map aesthetics */
         .leaflet-tile-container {
-            filter: brightness(0.5) contrast(1.1) saturate(0.3) !important;
+            filter: brightness(0.4) contrast(1.2) saturate(0.2) !important;
         }
 
-        /* The 'Flight' Engine: Slides markers smoothly over 5 seconds */
+        /* Smooth Movement */
         .moving-plane {
             transition: transform 5s linear, left 5s linear, top 5s linear !important;
         }
@@ -28,83 +27,74 @@
             color: #60a5fa;
             filter: drop-shadow(0 0 5px #3b82f6);
             transform-origin: center;
-            /* Rotation is fast and snappy */
             transition: transform 1s ease-in-out; 
         }
 
-        /* Pulse animation to make planes look like active radar blips */
-        @keyframes radar-pulse {
-            0% { opacity: 0.7; transform: scale(0.95); }
-            50% { opacity: 1; transform: scale(1.05); }
-            100% { opacity: 0.7; transform: scale(0.95); }
+        /* Heartbeat indicator so you know it's working */
+        #status {
+            position: absolute; bottom: 10px; right: 10px;
+            width: 8px; height: 8px; background: #3b82f6;
+            border-radius: 50%; z-index: 1000;
+            box-shadow: 0 0 10px #3b82f6;
+            animation: pulse 2s infinite;
         }
-        .plane-div-icon { 
-            animation: radar-pulse 3s infinite ease-in-out; 
+
+        @keyframes pulse {
+            0% { opacity: 0.2; } 50% { opacity: 1; } 100% { opacity: 0.2; }
         }
     </style>
 </head>
 <body>
+    <div id="status"></div>
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // 1. Initialize Map (Defaulting to UK center)
+        // 1. Setup Map
         const map = L.map('map', {
             center: [54.5, -3.0], 
             zoom: 10,
             zoomControl: false,
-            dragging: false,
-            scrollWheelZoom: false,
+            dragging: true, // Enabled for troubleshooting, but Lively will block it anyway
             attributionControl: false
         });
 
-        // 2. Add High-Tech Dark Tiles
         L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', {
-            subdomains: 'abcd',
-            maxZoom: 19
+            subdomains: 'abcd'
         }).addTo(map);
 
-        // Add City/Town Labels on a separate layer so they are clear
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', {
             subdomains: 'abcd',
             pane: 'shadowPane' 
         }).addTo(map);
 
-        // 3. Local View Logic (Geo-Specific)
+        // 2. Geolocation Fix
         async function setLocalView() {
-            // First, try High-Accuracy Browser GPS
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(
-                    (pos) => {
-                        map.setView([pos.coords.latitude, pos.coords.longitude], 10);
-                    },
-                    async () => {
-                        // Fallback: If GPS is blocked, use IP-based Geolocation
-                        try {
-                            const res = await fetch('https://ipapi.co/json/');
-                            const data = await res.json();
-                            if (data.latitude && data.longitude) {
-                                map.setView([data.latitude, data.longitude], 10);
-                            }
-                        } catch (e) { console.log("Using default view."); }
-                    }
-                );
-            }
+            try {
+                const res = await fetch('https://ipapi.co/json/');
+                const data = await res.json();
+                if (data.latitude && data.longitude) {
+                    map.setView([data.latitude, data.longitude], 10);
+                    // Force a map refresh
+                    map.invalidateSize();
+                }
+            } catch (e) { console.error("Geo-detect failed"); }
         }
         setLocalView();
 
-        // 4. Radar Tracking Setup
-        const API_URL = "https://corsproxy.io/?https%3A%2F%2Fapi.adsb.lol%2Fv2%2Flat%2F54.5%2Flon%2F-4.5%2Fdist%2F650";
+        // 3. Aircraft Logic
+        const API_URL = "https://api.adsb.lol/v2/lat/54.5/lon/-4.5/dist/650";
+        const PROXY_URL = "https://corsproxy.io/?"; 
         let aircraftLayer = L.layerGroup().addTo(map);
         let markers = {}; 
 
         async function scanRadar() {
             try {
-                const response = await fetch(API_URL);
-                if (!response.ok) return;
+                // We use a timestamp to bypass browser caching
+                const response = await fetch(`${PROXY_URL}${encodeURIComponent(API_URL)}&nocache=${Date.now()}`);
                 const data = await response.json();
                 
-                if (data.ac) {
+                if (data && data.ac) {
                     const currentHexes = new Set(data.ac.map(p => p.hex));
 
                     data.ac.forEach(plane => {
@@ -116,22 +106,14 @@
                                 </svg>`;
 
                             if (markers[plane.hex]) {
-                                // Add the smooth movement class only to existing markers
                                 const el = markers[plane.hex].getElement();
-                                if (el && !el.classList.contains('moving-plane')) {
-                                    el.classList.add('moving-plane');
-                                }
-
-                                // Update Lat/Lon - CSS takes care of the glide
+                                if (el && !el.classList.contains('moving-plane')) el.classList.add('moving-plane');
                                 markers[plane.hex].setLatLng([plane.lat, plane.lon]);
-                                
-                                // Update Rotation
                                 if (el) {
                                     const svg = el.querySelector('svg');
                                     if (svg) svg.style.transform = `rotate(${rotation}deg)`;
                                 }
                             } else {
-                                // New plane appears instantly at its first location
                                 const marker = L.marker([plane.lat, plane.lon], {
                                     icon: L.divIcon({
                                         html: planeSvg,
@@ -144,7 +126,6 @@
                         }
                     });
 
-                    // Remove planes that have landed or left radar range
                     for (let hex in markers) {
                         if (!currentHexes.has(hex)) {
                             aircraftLayer.removeLayer(markers[hex]);
@@ -152,12 +133,21 @@
                         }
                     }
                 }
-            } catch (err) { console.log("Scanning..."); }
+            } catch (err) { 
+                console.warn("Retrying radar sweep..."); 
+            }
         }
 
-        // Match refresh rate (5s) to the movement transition (5s)
+        // Start the loop
         setInterval(scanRadar, 5000);
         scanRadar();
+
+        // "Wake Up" the map after 2 seconds to ensure Lively Wallpaper is rendering it
+        setTimeout(() => {
+            map.invalidateSize();
+            map.fire('click'); 
+        }, 2000);
+
     </script>
 </body>
 </html>
