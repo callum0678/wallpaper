@@ -13,13 +13,17 @@
 
         .leaflet-control-container { display: none !important; }
         
-        /* THE MOVEMENT ENGINE */
-        .leaflet-marker-icon {
-            /* Linear ensures constant speed. 5s matches the data refresh exactly. */
+        /* DARK MAP FILTER: Makes the map look even more 'Radar-like' */
+        .leaflet-tile-container {
+            filter: brightness(0.6) contrast(1.2) saturate(0.5);
+        }
+
+        /* SMOOTH MOVEMENT ENGINE */
+        .moving-plane {
+            /* 5s duration matches the 5s API refresh */
             transition: transform 5s linear, left 5s linear, top 5s linear !important;
         }
 
-        /* PLANE STYLE & GLOW */
         .plane-icon {
             color: #60a5fa;
             filter: drop-shadow(0 0 5px #3b82f6);
@@ -27,11 +31,11 @@
             transition: transform 1s ease-in-out; 
         }
 
-        /* Subtle pulse to make them feel "alive" */
+        /* Subtle pulse effect */
         @keyframes radar-pulse {
-            0% { opacity: 0.8; transform: scale(1); }
-            50% { opacity: 1; transform: scale(1.1); }
-            100% { opacity: 0.8; transform: scale(1); }
+            0% { opacity: 0.7; }
+            50% { opacity: 1; }
+            100% { opacity: 0.7; }
         }
         .plane-div-icon {
             animation: radar-pulse 3s infinite ease-in-out;
@@ -43,24 +47,21 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // 1. Initialize Map
         const map = L.map('map', {
             center: [54.0, -2.5], 
-            zoom: 9,
+            zoom: 10,
             zoomControl: false,
             dragging: false,
             scrollWheelZoom: false,
             attributionControl: false
         });
 
-        // 2. Add Dark Map Texture (Cities & Roads)
-        // Using CartoDB Dark Matter - it looks like a high-tech radar
+        // Dark Matter Map Tiles
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
             subdomains: 'abcd',
             maxZoom: 19
         }).addTo(map);
 
-        // 3. Get Local Area (Approximate)
         async function setLocalView() {
             try {
                 const response = await fetch('https://ipapi.co/json/');
@@ -68,11 +69,10 @@
                 if (data.latitude && data.longitude) {
                     map.setView([data.latitude, data.longitude], 10);
                 }
-            } catch (e) { console.log("Defaulting to UK view"); }
+            } catch (e) { console.log("Defaulting view"); }
         }
         setLocalView();
 
-        // 4. Radar Tracking
         const API_URL = "https://corsproxy.io/?https%3A%2F%2Fapi.adsb.lol%2Fv2%2Flat%2F54.5%2Flon%2F-4.5%2Fdist%2F650";
         let aircraftLayer = L.layerGroup().addTo(map);
         let markers = {}; 
@@ -94,16 +94,23 @@
                                 </svg>`;
 
                             if (markers[plane.hex]) {
-                                // Set new LatLng - the CSS 'transition' will slide the marker there over 5 seconds
+                                // 1. Ensure the smooth transition class is added ONLY for existing markers
+                                const el = markers[plane.hex].getElement();
+                                if (el && !el.classList.contains('moving-plane')) {
+                                    el.classList.add('moving-plane');
+                                }
+
+                                // 2. Update Position
                                 markers[plane.hex].setLatLng([plane.lat, plane.lon]);
                                 
-                                // Update rotation
-                                const el = markers[plane.hex].getElement();
+                                // 3. Update Rotation
                                 if (el) {
                                     const svg = el.querySelector('svg');
                                     if (svg) svg.style.transform = `rotate(${rotation}deg)`;
                                 }
                             } else {
+                                // Create new plane WITHOUT the 'moving-plane' class initially
+                                // This prevents the "flying in from top-left" bug
                                 const marker = L.marker([plane.lat, plane.lon], {
                                     icon: L.divIcon({
                                         html: planeSvg,
@@ -116,7 +123,6 @@
                         }
                     });
 
-                    // Remove inactive planes
                     for (let hex in markers) {
                         if (!currentHexes.has(hex)) {
                             aircraftLayer.removeLayer(markers[hex]);
@@ -127,7 +133,6 @@
             } catch (err) { console.log("Radar Sweep..."); }
         }
 
-        // Set refresh to 5 seconds to match the CSS transition duration
         setInterval(scanRadar, 5000);
         scanRadar();
     </script>
