@@ -10,38 +10,26 @@
             height: 100%; width: 100%; margin: 0; padding: 0; 
             background-color: #020617; overflow: hidden;
         }
-
         .leaflet-control-container { display: none !important; }
-        
-        /* Map aesthetics */
         .leaflet-tile-container {
             filter: brightness(0.4) contrast(1.2) saturate(0.2) !important;
         }
-
-        /* Smooth Movement */
         .moving-plane {
             transition: transform 5s linear, left 5s linear, top 5s linear !important;
         }
-
         .plane-icon {
             color: #60a5fa;
             filter: drop-shadow(0 0 5px #3b82f6);
             transform-origin: center;
-            transition: transform 1s ease-in-out; 
         }
-
-        /* Heartbeat indicator so you know it's working */
         #status {
-            position: absolute; bottom: 10px; right: 10px;
-            width: 8px; height: 8px; background: #3b82f6;
+            position: absolute; bottom: 15px; right: 15px;
+            width: 10px; height: 10px; background: #3b82f6;
             border-radius: 50%; z-index: 1000;
             box-shadow: 0 0 10px #3b82f6;
             animation: pulse 2s infinite;
         }
-
-        @keyframes pulse {
-            0% { opacity: 0.2; } 50% { opacity: 1; } 100% { opacity: 0.2; }
-        }
+        @keyframes pulse { 0% { opacity: 0.2; } 50% { opacity: 1; } 100% { opacity: 0.2; } }
     </style>
 </head>
 <body>
@@ -50,12 +38,10 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // 1. Setup Map
         const map = L.map('map', {
             center: [54.5, -3.0], 
             zoom: 10,
             zoomControl: false,
-            dragging: true, // Enabled for troubleshooting, but Lively will block it anyway
             attributionControl: false
         });
 
@@ -68,30 +54,35 @@
             pane: 'shadowPane' 
         }).addTo(map);
 
-        // 2. Geolocation Fix
+        // Location Detection (Switched provider to avoid CORS block)
         async function setLocalView() {
             try {
-                const res = await fetch('https://ipapi.co/json/');
+                const res = await fetch('https://demo.ip-api.com/json/?fields=lat,lon');
                 const data = await res.json();
-                if (data.latitude && data.longitude) {
-                    map.setView([data.latitude, data.longitude], 10);
-                    // Force a map refresh
-                    map.invalidateSize();
+                if (data.lat && data.lon) {
+                    map.setView([data.lat, data.lon], 10);
                 }
-            } catch (e) { console.error("Geo-detect failed"); }
+            } catch (e) { 
+                console.log("Geo-detect failed, using default UK center."); 
+            }
         }
         setLocalView();
 
-        // 3. Aircraft Logic
         const API_URL = "https://api.adsb.lol/v2/lat/54.5/lon/-4.5/dist/650";
+        // New proxy method to prevent 400 errors
         const PROXY_URL = "https://corsproxy.io/?"; 
+        
         let aircraftLayer = L.layerGroup().addTo(map);
         let markers = {}; 
 
         async function scanRadar() {
             try {
-                // We use a timestamp to bypass browser caching
-                const response = await fetch(`${PROXY_URL}${encodeURIComponent(API_URL)}&nocache=${Date.now()}`);
+                // Fixed the URL structure for the proxy
+                const targetUrl = encodeURIComponent(API_URL);
+                const response = await fetch(PROXY_URL + targetUrl);
+                
+                if (!response.ok) throw new Error('Proxy Error');
+                
                 const data = await response.json();
                 
                 if (data && data.ac) {
@@ -134,20 +125,17 @@
                     }
                 }
             } catch (err) { 
-                console.warn("Retrying radar sweep..."); 
+                console.warn("Radar connection issue... retrying."); 
             }
         }
 
-        // Start the loop
         setInterval(scanRadar, 5000);
         scanRadar();
 
-        // "Wake Up" the map after 2 seconds to ensure Lively Wallpaper is rendering it
-        setTimeout(() => {
-            map.invalidateSize();
-            map.fire('click'); 
-        }, 2000);
-
+        // Refresh map layout once on load
+        window.onload = () => {
+            setTimeout(() => { map.invalidateSize(); }, 1000);
+        };
     </script>
 </body>
 </html>
