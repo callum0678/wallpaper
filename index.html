@@ -1,17 +1,35 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>UK Radar Wallpaper</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UK & Ireland Live Radar</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body, html, #map { height: 100%; margin: 0; padding: 0; background-color: #020617; }
-        .leaflet-control-zoom, .leaflet-control-attribution { display: none !important; }
+        /* Setup for Fullscreen Wallpaper */
+        body, html, #map { 
+            height: 100%; 
+            width: 100%;
+            margin: 0; 
+            padding: 0; 
+            background-color: #020617; /* Deep Navy/Black */
+            overflow: hidden;
+        }
+
+        /* Hide all Leaflet UI for a clean look */
+        .leaflet-control-container { display: none !important; }
         
-        /* Custom Plane Marker Style */
+        /* The "Radar" Plane Style */
         .plane-icon {
-            color: #60a5fa;
+            color: #60a5fa; /* Electric Blue */
+            filter: drop-shadow(0 0 2px #60a5fa);
             transform-origin: center;
-            transition: all 0.5s linear;
+            transition: all 4.8s linear; /* Smooth movement between 5s updates */
+        }
+
+        /* Subtle Glow for Land Borders */
+        .land-outline {
+            filter: drop-shadow(0 0 5px rgba(51, 65, 85, 0.5));
         }
     </style>
 </head>
@@ -20,65 +38,99 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // Initialize map based on HAR coordinates
+        // 1. Initialize Map centered on the British Isles
+        // We disable dragging and zooming to keep it as a static wallpaper
         const map = L.map('map', {
-            center: [54.5, -4.5],
+            center: [54.5, -4.0], 
             zoom: 6,
             zoomControl: false,
+            dragging: false,
+            scrollWheelZoom: false,
+            doubleClickZoom: false,
+            touchZoom: false,
             attributionControl: false
         });
 
-        // 1. Restore the UK & Ireland Outline
-        // We fetch the boundaries to recreate the "Slate Land" look
-        fetch('https://raw.githubusercontent.com/martinjc/UK-GeoJSON/master/json/administrative/gb/uk.json')
+        // 2. Load Landmass Outlines (UK & Ireland)
+        // Using a combined GeoJSON for the British Isles
+        const geoJsonUrl = 'https://raw.githubusercontent.com/isellsoap/deutschland.geojson/master/britain_ireland.geojson';
+        
+        fetch('https://raw.githubusercontent.com/codeforgermany/click_dummy/master/public/data/countries.geojson')
             .then(res => res.json())
             .then(data => {
                 L.geoJSON(data, {
+                    filter: function(feature) {
+                        return ['United Kingdom', 'Ireland'].includes(feature.properties.ADMIN);
+                    },
                     style: {
-                        color: '#334155', // Grey Outline[cite: 1]
-                        weight: 1,
-                        fillColor: '#0f172a', // Slate Land[cite: 1]
-                        fillOpacity: 1
+                        color: '#1e293b',    /* Dark Slate Border */
+                        weight: 2,
+                        fillColor: '#0f172a', /* Slightly lighter than background */
+                        fillOpacity: 1,
+                        className: 'land-outline'
                     }
                 }).addTo(map);
             });
 
+        // 3. Live Plane Tracking Logic
         const API_URL = "https://corsproxy.io/?https%3A%2F%2Fapi.adsb.lol%2Fv2%2Flat%2F54.5%2Flon%2F-4.5%2Fdist%2F650";
         let aircraftLayer = L.layerGroup().addTo(map);
+        let markers = {}; // Store markers to update position instead of redrawing
 
         async function scanRadar() {
             try {
                 const response = await fetch(API_URL);
-                if (!response.ok) throw new Error("API Offline");
                 const data = await response.json();
                 
-                aircraftLayer.clearLayers();
-
                 if (data.ac) {
+                    // Create a set of current hex codes to remove landed/departed planes
+                    const currentHexes = new Set(data.ac.map(p => p.hex));
+
                     data.ac.forEach(plane => {
                         if (plane.lat && plane.lon) {
-                            // Create a simple plane "icon" using SVG
+                            const rotation = plane.track || 0;
                             const planeSvg = `
-                                <svg class="plane-icon" style="transform: rotate(${plane.track || 0}deg)" viewBox="0 0 24 24" width="18" height="18">
+                                <svg class="plane-icon" style="transform: rotate(${rotation}deg)" viewBox="0 0 24 24" width="20" height="20">
                                     <path fill="currentColor" d="M21,16L22,13L15,10V3.5A1.5,1.5 0 0,0 13.5,2A1.5,1.5 0 0,0 12,3.5V10L5,13L6,16L12,14V18.5L10,20V22L13.5,21L17,22V20L15,18.5V14L21,16Z" />
                                 </svg>`;
 
-                            L.marker([plane.lat, plane.lon], {
-                                icon: L.divIcon({
-                                    html: planeSvg,
-                                    className: 'plane-div-icon',
-                                    iconSize: [18, 18]
-                                })
-                            }).addTo(aircraftLayer);
+                            if (markers[plane.hex]) {
+                                // Update existing plane position
+                                markers[plane.hex].setLatLng([plane.lat, plane.lon]);
+                                // Update rotation by finding the SVG element
+                                const iconElement = markers[plane.hex].getElement();
+                                if (iconElement) {
+                                    const svg = iconElement.querySelector('svg');
+                                    if (svg) svg.style.transform = `rotate(${rotation}deg)`;
+                                }
+                            } else {
+                                // Add new plane
+                                const marker = L.marker([plane.lat, plane.lon], {
+                                    icon: L.divIcon({
+                                        html: planeSvg,
+                                        className: 'plane-div-icon',
+                                        iconSize: [20, 20]
+                                    })
+                                }).addTo(aircraftLayer);
+                                markers[plane.hex] = marker;
+                            }
                         }
                     });
+
+                    // Remove planes that are no longer in the data
+                    for (let hex in markers) {
+                        if (!currentHexes.has(hex)) {
+                            aircraftLayer.removeLayer(markers[hex]);
+                            delete markers[hex];
+                        }
+                    }
                 }
             } catch (error) {
-                console.error("Radar Sync Failed[cite: 1]");
+                console.error("Radar signal lost...");
             }
         }
 
-        // Refresh every 5 seconds for smoother tracking
+        // Run Every 5 Seconds
         scanRadar();
         setInterval(scanRadar, 5000);
     </script>
